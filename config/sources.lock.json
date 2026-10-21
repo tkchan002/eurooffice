@@ -1,0 +1,20 @@
+{
+  "archive_kind": "pinned-source-snapshot",
+  "release_tag": "x2t-source-v9.3.5-baseline-1",
+  "repository": "tkchan002/eurooffice",
+  "schema": 1,
+  "sources": {
+    "cryptpad": {
+      "asset": "cryptpad-source.tar.gz",
+      "commit": "95f775fd3c42fae9e9af66ca072d3da3763e6c76",
+      "sha256": "ffb38fec2a2e782a130d1d7226cd367990e4570f87b51d0bfd55237a92662b01",
+      "size": 273154700
+    },
+    "eurooffice": {
+      "asset": "eurooffice-source.tar.gz",
+      "commit": "5a33ce6c4a63387e8576c7e763b70cd971988b24",
+      "sha256": "578b3ef0cc5e2832d552ad82e0bddf972a9f2256d7a472334d064f4dad0ee531",
+      "size": 221475641
+    }
+  }
+}
