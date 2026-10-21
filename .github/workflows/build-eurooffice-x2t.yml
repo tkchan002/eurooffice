@@ -1,4 +1,4 @@
-name: Build EuroOffice 9.3.5 x2t WASM (qmake-archive v7)
+name: Build EuroOffice 9.3.5 x2t WASM (V8-free renderer v8)
 
 on:
   workflow_dispatch:
@@ -59,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_*.py' -v
-          python3 -m py_compile scripts/prepare_eurooffice.py scripts/check_docker_recipe.py scripts/tune_docker_recipe.py scripts/check_build_resources.py scripts/optimize_docker_layers.py
+          python3 -m py_compile scripts/prepare_eurooffice.py scripts/port_renderer_qmake.py scripts/check_docker_recipe.py scripts/tune_docker_recipe.py scripts/check_build_resources.py scripts/optimize_docker_layers.py
           for script in scripts/fetch_sources.sh scripts/cleanup_hosted_runner.sh scripts/build_with_telemetry.sh; do
             bash -n "$script"
           done
@@ -82,6 +82,14 @@ jobs:
             --target .work/eurooffice \
             --policy config/port-policy.json \
             --report artifacts/provenance/source-preparation.json
+
+      - name: Port CryptPad browser-only renderer qmake descriptions (exclude V8 inspector)
+        run: |
+          set -euo pipefail
+          python3 scripts/port_renderer_qmake.py \
+            --cryptpad .work/cryptpad/core \
+            --target .work/eurooffice \
+            --report artifacts/provenance/renderer-qmake-port.json
 
       - name: Repair parser stages and UnicodeConverter archive; audit recipe
         run: |

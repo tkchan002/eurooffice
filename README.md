@@ -1,6 +1,29 @@
-# EuroOffice 9.3.5 x2t WebAssembly Builder — v7
+# EuroOffice 9.3.5 x2t WebAssembly Builder — v8
 
 **Experimental. No verified converter binary is included.** This repository builds from the pinned EuroOffice 9.3.5 source and the pinned CryptPad x2t-WASM recipe using GitHub Actions. It is separate from Nurse Memo; do **not** overwrite the working `x2t.js` / `x2t.wasm` until real conversion tests pass.
+
+## v8 — fix native V8 inspector compilation in browser-only WASM
+
+**Evidence:** v7 Docker compilation reached `DesktopEditor/doctrenderer` but qmake scheduled `js_internal/v8/v8_base.cpp` and `js_internal/v8/inspector/*.cpp`, which require native V8 and Boost.Beast headers. The observed failing lines have `-DV8_INSPECTOR` and `-I/core/Common/3dParty/v8/...`. Simply adding a header path would be the wrong architectural fix.
+
+**Cause:** v3 intentionally preserved EuroOffice 9.3.5's native `doctrenderer.pri` and `js_internal/js_base.pri`. CryptPad's pinned WASM build changes **those two build descriptions** to omit the native JS engine, inspector, and optional renderer embedding sources. We had imported its renderer stubs but not its build-selection files.
+
+**v8 correction:** `scripts/port_renderer_qmake.py` copies only the two `.pri` files from the **already pinned** CryptPad source into the prepared EuroOffice source tree. It validates the known EuroOffice native configuration, validates the expected CryptPad browser-only configuration, rejects accidental native V8 activation, ensures both files are valid before writing, supports reruns, and produces `renderer-qmake-port.json`. No unrelated EuroOffice C++ implementation files, security files, fonts or libraries are replaced. CryptPad's three renderer stubs remain as in v7.
+
+This intentionally omits some native renderer capabilities from the WASM library (as CryptPad's x2t recipe does). **It is not a claim of feature parity with the native EuroOffice DocumentServer**; subsequent conversions and DOCX/XLSX/PPTX round trips must be verified. It also does not guarantee all newer EuroOffice 9.3.5 sources will link with the older CryptPad qmake configuration.
+
+### Updating your v7 GitHub repo
+
+Apply the **v8 update-only ZIP** (four files) to the same paths, replacing existing versions. Run `preflight` then `build` on `ubuntu-24.04` with the current disk optimizations. Check `renderer-qmake-port.json` for `"ok": true` and two `"ported"` files. If a new compiler error appears, upload the next diagnostics ZIP. Keep the existing Nurse Memo converter unchanged until the full converter build and DOCX smoke test succeed.
+
+### Full-source references
+
+- [Pinned CryptPad `doctrenderer.pri`](https://github.com/cryptpad/onlyoffice-x2t-wasm/blob/95f775fd3c42fae9e9af66ca072d3da3763e6c76/core/DesktopEditor/doctrenderer/doctrenderer.pri)
+- [Pinned CryptPad `js_base.pri`](https://github.com/cryptpad/onlyoffice-x2t-wasm/blob/95f775fd3c42fae9e9af66ca072d3da3763e6c76/core/DesktopEditor/doctrenderer/js_internal/js_base.pri)
+- [EuroOffice 9.3.5 native `doctrenderer.pri`](https://github.com/Euro-Office/core/blob/v9.3.5/DesktopEditor/doctrenderer/doctrenderer.pri)
+- [EuroOffice 9.3.5 native `js_base.pri`](https://github.com/Euro-Office/core/blob/v9.3.5/DesktopEditor/doctrenderer/js_internal/js_base.pri)
+
+---
 
 ## v7: fix confirmed UnicodeConverter Docker failure
 
@@ -29,7 +52,7 @@ This verifies that the archive is nonempty and includes the actual compiled obje
 
 The change is applied by `scripts/tune_docker_recipe.py` **before** v6's shared-layer optimization. `scripts/check_docker_recipe.py` refuses to proceed if the obsolete move remains or the archive-verification instruction is missing. The adapter is idempotent and rejects unrecognized upstream recipe changes.
 
-## Files to update from v6
+## Previous v7 update from v6 (included in this full ZIP)
 
 If your repository is already on **v6**, use `EuroOffice_WASM_Builder_9.3.5_v7_UPDATE_ONLY.zip`. Replace the following five files using the GitHub website, preserving their paths:
 
