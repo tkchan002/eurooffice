@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 3,
+  "purpose": "EuroOffice-first, allowlisted WASM source preparation. Never merge entire ONLYOFFICE or CryptPad trees.",
+  "importIfMissing": [
+    "Common/3dParty/html/css/CssCalculator.pri",
+    "Common/kernel.pro",
+    "DesktopEditor/doctrenderer/docbuilder_empty.cpp",
+    "DesktopEditor/doctrenderer/docbuilder_p_empty.cpp",
+    "DesktopEditor/doctrenderer/doctrenderer.pri",
+    "DesktopEditor/doctrenderer/doctrenderer_empty.cpp",
+    "DesktopEditor/doctrenderer/js_internal/js_base.pri",
+    "DesktopEditor/graphics/pro/freetype.pri",
+    "DesktopEditor/graphics/pro/raster.pri",
+    "DesktopEditor/graphics/pro/textshaper.pri",
+    "Fb2File/Fb2File.pro",
+    "OOXML/Projects/Linux/DocxFormatLib/DocxFormatLib.pro",
+    "OdfFile/Projects/Linux/OdfFormatLib.pro",
+    "OfficeUtils/OfficeUtils.pri",
+    "PdfFile/PdfFile.pro",
+    "UnicodeConverter/UnicodeConverter.pro"
+  ],
+  "replaceExact": [
+    {
+      "file": "Common/3dParty/html/css/src/CCssCalculator_Private.h",
+      "old": "#include \"katana.h\"",
+      "new": "#include \"../../katana-parser/src/katana.h\"",
+      "reason": "Point Emscripten compiler at fetched Katana headers"
+    },
+    {
+      "file": "Common/3dParty/html/htmltoxhtml.cpp",
+      "old": "#include \"gumbo.h\"",
+      "new": "#include \"gumbo-parser/src/gumbo.h\"",
+      "reason": "Point Emscripten compiler at fetched Gumbo headers"
+    },
+    {
+      "file": "Common/3dParty/md/md2html.cpp",
+      "old": "#include \"md/src/md4c-html.h\"",
+      "new": "#include \"md4c/src/md4c-html.h\"",
+      "reason": "Use the fetched md4c source path"
+    },
+    {
+      "file": "DesktopEditor/fontengine/TextHyphen.cpp",
+      "old": "#include \"hyphen/hnjalloc.h\"\n#include \"hyphen/hnjalloc.c\"\n#include \"hyphen/hyphen.c\"",
+      "new": "#include \"../../Common/3dParty/hyphen/hyphen/hnjalloc.h\"\n#include \"../../Common/3dParty/hyphen/hyphen/hnjalloc.c\"\n#include \"../../Common/3dParty/hyphen/hyphen/hyphen.c\"",
+      "reason": "Use fetched libhyphen sources without overriding other EuroOffice code"
+    },
+    {
+      "file": "HtmlFile2/HTMLReader.cpp",
+      "old": "#include \"gumbo.h\"",
+      "new": "#include \"../Common/3dParty/html/gumbo-parser/src/gumbo.h\"",
+      "reason": "Resolve Gumbo header in the browser build"
+    },
+    {
+      "file": "DesktopEditor/doctrenderer/editors.h",
+      "old": "#include \"../js_internal/js_base.h\"",
+      "new": "#include \"./js_internal/js_base.h\"",
+      "reason": "Resolve the renderer JavaScript bridge header"
+    },
+    {
+      "file": "X2tConverter/src/main.cpp",
+      "old": "#include \"../../Common/3dParty/misc/proclimits.h\"",
+      "new": "#if !defined(__EMSCRIPTEN__)\n#include \"../../Common/3dParty/misc/proclimits.h\"\n#endif",
+      "reason": "Do not include the native process-limit shim when compiling WebAssembly"
+    },
+    {
+      "file": "X2tConverter/src/main.cpp",
+      "old": "#if !defined(_DEBUG) && !defined(__ANDROID__) && !defined(_IOS)",
+      "new": "#if !defined(_DEBUG) && !defined(__ANDROID__) && !defined(_IOS) && !defined(__EMSCRIPTEN__)",
+      "reason": "Avoid native process-limit calls in Emscripten"
+    },
+    {
+      "file": "X2tConverter/build/Qt/X2tConverter.pri",
+      "old": "ADD_DEPENDENCY(graphics, kernel, UnicodeConverter, kernel_network, Fb2File, PdfFile, HtmlFile2, EpubFile, XpsFile, OFDFile, DjVuFile, doctrenderer, DocxRenderer, IWorkFile, HWPFile, StarMathConverter, ooxmlsignature)",
+      "new": "ADD_DEPENDENCY(graphics, kernel, UnicodeConverter, kernel_network, Fb2File, PdfFile, HtmlFile2, EpubFile, XpsFile, DjVuFile, doctrenderer, DocxRenderer, IWorkFile, HWPFile)",
+      "reason": "Link only libraries produced by this Docker recipe, retaining FB2 support; signature is linked separately"
+    }
+  ],
+  "preserveEuroOffice": [
+    "Apple/CMakeLists.txt",
+    "Common/CMakeLists.txt",
+    "Common/Network/CMakeLists.txt",
+    "Common/js/desktop_fetch_new.js",
+    "DesktopEditor/doctrenderer/CMakeLists.txt",
+    "DesktopEditor/graphics/cmake/CMakeLists.txt",
+    "DesktopEditor/graphics/pro/js/CMakeLists.txt",
+    "DesktopEditor/graphics/pro/js/wasm/patches/fix-wasm-openssl.patch",
+    "DesktopEditor/xmlsec/src/CMakeLists.txt",
+    "DesktopEditor/xmlsec/src/wasm/3rdParty/patches/fix-wasm-openssl.patch",
+    "DjVuFile/CMakeLists.txt",
+    "OdfFile/Reader/Converter/StarMath2OOXML/CMakeLists.txt",
+    "OfficeUtils/CMakeLists.txt",
+    "Common/Network/FileTransporter/src/FileTransporter_curl.cpp",
+    "MsBinaryFile/Common/Vml/PPTShape/BinaryReader.cpp",
+    "MsBinaryFile/Common/Vml/PPTShape/BinaryReader.h",
+    "PdfFile/lib/xpdf/Decrypt.cc"
+  ],
+  "assertEuroOfficeContent": [
+    {"file":"Common/Network/FileTransporter/src/FileTransporter_curl.cpp","needle":"CURLOPT_SSL_VERIFYPEER, 1L"},
+    {"file":"Common/Network/FileTransporter/src/FileTransporter_curl.cpp","needle":"CURLOPT_SSL_VERIFYHOST, 2L"},
+    {"file":"PdfFile/lib/xpdf/Decrypt.cc","needle":"#include <openssl/sha.h>"},
+    {"file":"MsBinaryFile/Common/Vml/PPTShape/BinaryReader.cpp","needle":"CBinaryReader::~CBinaryReader()"}
+  ]
+}
