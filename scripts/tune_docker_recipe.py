@@ -10,6 +10,11 @@ image names. This patch reuses the existing pinned `html` stage for the FB2
 parser source, drops two unused .a COPYs from the optional log-symbols stage,
 and retains EuroOffice's FB2 converter at final link time.
 
+The pinned UnicodeConverter stage also has an obsolete instruction which
+renames /core/UnicodeConverter.o to a .a archive. In EuroOffice 9.3.5, qmake
+already writes a valid static archive to build/lib/linux_64/. Verify it
+instead of attempting to rename a nonexistent object file.
+
 All edits are specific to the verified upstream layout and fail closed.
 """
 import argparse
@@ -19,6 +24,14 @@ import sys
 FB2_STAGE = 'FROM base AS fb2file\n'
 LOG_STAGE = 'FROM base AS log-symbols\n'
 BUILD_STAGE = 'FROM base AS build\n'
+UNICODE_STAGE = 'FROM base AS unicodeconverter\n'
+COMMON_STAGE = 'FROM base AS common\n'
+OLD_UNICODE_MOVE = ('RUN mv /core/UnicodeConverter.o '
+                    '/core/build/lib/linux_64/libUnicodeConverter.a\n')
+NEW_UNICODE_CHECK = (
+    'RUN test -s /core/build/lib/linux_64/libUnicodeConverter.a && \\\n'
+    '    ar t /core/build/lib/linux_64/libUnicodeConverter.a | grep -Fxq UnicodeConverter.o\n'
+)
 OLD_FB2_PARSER = 'COPY --from=gumbo /gumbo-parser /gumbo-parser\n'
 NEW_FB2_PARSER = ('COPY --from=html /core/Common/3dParty/html '
                   '/core/Common/3dParty/html\n')
@@ -59,6 +72,22 @@ def modify(text):
         raise ValueError('Unexpected FB2 Gumbo parser COPY; review the pinned Dockerfile')
     text = head + fb2 + tail
 
+    # EuroOffice's `embuild.sh UnicodeConverter` invokes qmake and creates
+    # /core/build/lib/linux_64/libUnicodeConverter.a directly (confirmed by
+    # v6 docker-build.log: `ar cqs ...libUnicodeConverter.a ...UnicodeConverter.o`).
+    # The pinned CryptPad recipe's subsequent `mv /core/UnicodeConverter.o`
+    # assumes a different build output and fails even though qmake succeeded.
+    head, unicode, tail = between(text, UNICODE_STAGE, COMMON_STAGE)
+    if unicode.count('embuild.sh UnicodeConverter') != 1:
+        raise ValueError('UnicodeConverter compile step missing or duplicated')
+    if unicode.count(OLD_UNICODE_MOVE) == 1 and unicode.count(NEW_UNICODE_CHECK) == 0:
+        unicode = unicode.replace(OLD_UNICODE_MOVE, NEW_UNICODE_CHECK, 1)
+    elif unicode.count(OLD_UNICODE_MOVE) == 0 and unicode.count(NEW_UNICODE_CHECK) == 1:
+        pass  # already patched
+    else:
+        raise ValueError('Unexpected UnicodeConverter archive handling; inspect pinned source')
+    text = head + unicode + tail
+
     head, logs, tail = between(text, LOG_STAGE, 'FROM scratch AS log-symbols-output\n')
     if logs.count(OLD_GUMBO_ARCHIVE) == 1 and logs.count(OLD_KATANA_ARCHIVE) == 1:
         logs = logs.replace(OLD_GUMBO_ARCHIVE + OLD_KATANA_ARCHIVE,
@@ -82,6 +111,8 @@ def modify(text):
     text = head + BUILD_STAGE + build
     if '--from=gumbo' in text or '--from=katana' in text:
         raise ValueError('Undefined Gumbo/Katana external-image references remain')
+    if OLD_UNICODE_MOVE in text or text.count(NEW_UNICODE_CHECK) != 1:
+        raise ValueError('UnicodeConverter must use the verified qmake-produced archive')
     return text
 
 
@@ -98,7 +129,7 @@ def main():
     except (ValueError, OSError) as exc:
         print(f'DOCKER RECIPE ERROR: {exc}', file=sys.stderr)
         return 1
-    print('PASS: FB2 uses pinned HTML parser sources, undefined Gumbo/Katana stages removed, FB2 linked')
+    print('PASS: FB2 parser sources and library wired; UnicodeConverter qmake archive verified')
     return 0
 
 

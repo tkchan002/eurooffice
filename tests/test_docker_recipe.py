@@ -28,6 +28,16 @@ RUN python fetch.py
 RUN sed -i 's/tty()/0/' katana-parser/src/katana.lex.c
 FROM base AS heif
 RUN true
+FROM base AS unicodeconverter
+COPY core/UnicodeConverter /core/UnicodeConverter
+COPY core/DesktopEditor/common /core/DesktopEditor/common
+WORKDIR /core
+RUN embuild.sh UnicodeConverter
+RUN mkdir -p /core/build/lib/linux_64
+RUN mv /core/UnicodeConverter.o /core/build/lib/linux_64/libUnicodeConverter.a
+FROM base AS common
+COPY --from=unicodeconverter /core/build/lib/linux_64/ /core/build/lib/linux_64/
+RUN embuild.sh Common
 FROM base AS fb2file
 COPY core/Common /core/Common
 COPY --from=gumbo /gumbo-parser /gumbo-parser
@@ -64,6 +74,56 @@ class RepairTests(unittest.TestCase):
         self.assertEqual(1, fixed.split('FROM base AS build\n')[1].count(tune.FB2_LIB))
         self.assertTrue(audit.inspect(fixed)['ok'])
         self.assertEqual([], audit.inspect(fixed)['undefined_copy_sources'])
+
+    def test_observed_unicodeconverter_error_is_corrected(self):
+        fixed = tune.modify(RECIPE)
+        self.assertNotIn(tune.OLD_UNICODE_MOVE, fixed)
+        self.assertEqual(1, fixed.count(tune.NEW_UNICODE_CHECK))
+        self.assertIn('RUN embuild.sh UnicodeConverter', fixed)
+        self.assertIn('COPY --from=unicodeconverter /core/build/lib/linux_64/', fixed)
+        self.assertTrue(audit.inspect(fixed)['checks']['unicodeconverter_archive_verified'])
+
+    def test_real_static_archive_is_accepted_and_wrong_file_is_rejected(self):
+        import shutil
+        import subprocess
+        if not shutil.which('ar'):
+            self.skipTest('GNU/LLVM ar is not installed locally')
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            target = root / 'build' / 'lib' / 'linux_64'
+            target.mkdir(parents=True)
+            obj = root / 'UnicodeConverter.o'
+            obj.write_bytes(b'fixture-object')
+            archive = target / 'libUnicodeConverter.a'
+            subprocess.run(['ar', 'qcs', str(archive), str(obj)], check=True)
+            check = tune.NEW_UNICODE_CHECK.removeprefix('RUN ').replace('/core/build/lib/linux_64/', str(target) + '/')
+            success = subprocess.run(['bash', '-e', '-c', check], capture_output=True, text=True)
+            self.assertEqual(0, success.returncode, success.stderr)
+            archive.unlink()
+            failure = subprocess.run(['bash', '-e', '-c', check], capture_output=True, text=True)
+            self.assertNotEqual(0, failure.returncode)
+
+    def test_archive_verification_must_not_be_removed(self):
+        fixed = tune.modify(RECIPE)
+        missing = fixed.replace(tune.NEW_UNICODE_CHECK, '')
+        self.assertFalse(audit.inspect(missing)['ok'])
+        self.assertIn('unicodeconverter_archive_verified', audit.inspect(missing)['errors'])
+
+    def test_stale_move_fails_audit_before_compilation(self):
+        fixed = tune.modify(RECIPE)
+        stale = fixed.replace(tune.NEW_UNICODE_CHECK, tune.OLD_UNICODE_MOVE)
+        self.assertFalse(audit.inspect(stale)['ok'])
+        self.assertIn('unicodeconverter_archive_verified', audit.inspect(stale)['errors'])
+
+    def test_unexpected_unicode_stage_is_refused(self):
+        broken = RECIPE.replace(tune.OLD_UNICODE_MOVE, 'RUN touch /core/UnicodeConverter.o\n')
+        with self.assertRaisesRegex(ValueError, 'Unexpected UnicodeConverter'):
+            tune.modify(broken)
+
+    def test_unicode_compiler_command_must_remain(self):
+        broken = RECIPE.replace('RUN embuild.sh UnicodeConverter\n', 'RUN true\n')
+        with self.assertRaisesRegex(ValueError, 'compile step'):
+            tune.modify(broken)
 
     def test_repair_is_idempotent(self):
         once = tune.modify(RECIPE)

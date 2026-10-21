@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed on undefined Docker build stages and missing parser wiring."""
+"""Fail closed on undefined stages, parser wiring, and stale UnicodeConverter move."""
 import argparse
 import json
 from pathlib import Path
@@ -10,6 +10,8 @@ PARSER_COPY = ('COPY --from=html /core/Common/3dParty/html '
                '/core/Common/3dParty/html')
 REQUIRED_FB2_LIB = ('COPY --from=fb2file /core/build/lib/linux_64/libFb2File.a '
                     '/core/build/lib/linux_64/')
+UNICODE_ARCHIVE_CHECK = 'RUN test -s /core/build/lib/linux_64/libUnicodeConverter.a && \\\n    ar t /core/build/lib/linux_64/libUnicodeConverter.a | grep -Fxq UnicodeConverter.o\n'
+UNICODE_BAD_MOVE = 'RUN mv /core/UnicodeConverter.o /core/build/lib/linux_64/libUnicodeConverter.a'
 
 
 def segment(text, start, end):
@@ -26,12 +28,16 @@ def inspect(text):
     fb2 = segment(text, 'FROM base AS fb2file\n', 'FROM base AS htmlfile2\n')
     build = text.split('FROM base AS build\n', 1)[1] if 'FROM base AS build\n' in text else ''
     log_symbols = segment(text, 'FROM base AS log-symbols\n', 'FROM scratch AS log-symbols-output\n')
+    unicode = segment(text, 'FROM base AS unicodeconverter\n', 'FROM base AS common\n')
     checks = {
         'html_fetches_pinned_parser_sources': 'RUN python fetch.py' in html,
         'fb2_copies_fetched_parser_tree': PARSER_COPY in fb2,
         'final_link_includes_fb2': REQUIRED_FB2_LIB in build,
         'no_unresolved_parser_archives': not any(x in log_symbols for x in
                 ('--from=gumbo', '--from=katana')),
+        'unicodeconverter_builds_qmake_archive': unicode.count('embuild.sh UnicodeConverter') == 1,
+        'unicodeconverter_archive_verified': unicode.count(UNICODE_ARCHIVE_CHECK) == 1
+                                              and UNICODE_BAD_MOVE not in unicode,
         'no_undefined_copy_sources': not missing,
     }
     errors = [k for k, ok in checks.items() if not ok]
