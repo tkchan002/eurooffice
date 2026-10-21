@@ -1,4 +1,4 @@
-name: Build EuroOffice 9.3.5 x2t WASM (V8-free renderer v8)
+name: Build EuroOffice 9.3.5 x2t WASM (owned snapshots v9)
 
 on:
   workflow_dispatch:
@@ -45,6 +45,7 @@ jobs:
     runs-on: ${{ inputs.runner_label }}
     timeout-minutes: 350
     env:
+      GH_TOKEN: ${{ github.token }}
       DOCKER_BUILDKIT: '1'
       BUILDKIT_PROGRESS: plain
       BUILD_RUNNER_LABEL: ${{ inputs.runner_label }}
@@ -59,8 +60,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_*.py' -v
-          python3 -m py_compile scripts/prepare_eurooffice.py scripts/port_renderer_qmake.py scripts/check_docker_recipe.py scripts/tune_docker_recipe.py scripts/check_build_resources.py scripts/optimize_docker_layers.py
-          for script in scripts/fetch_sources.sh scripts/cleanup_hosted_runner.sh scripts/build_with_telemetry.sh; do
+          python3 -m py_compile scripts/prepare_eurooffice.py scripts/port_renderer_qmake.py scripts/check_docker_recipe.py scripts/tune_docker_recipe.py scripts/check_build_resources.py scripts/optimize_docker_layers.py scripts/source_snapshot.py scripts/audit_external_inputs.py
+          for script in scripts/fetch_sources.sh scripts/fetch_archived_sources.sh scripts/bootstrap_upstream.sh scripts/cleanup_hosted_runner.sh scripts/build_with_telemetry.sh; do
             bash -n "$script"
           done
           node --check scripts/verify_converter.cjs
@@ -70,8 +71,8 @@ jobs:
         if: inputs.mode == 'build' && inputs.cleanup_standard_host
         run: bash scripts/cleanup_hosted_runner.sh
 
-      - name: Fetch pinned CryptPad and EuroOffice source
-        run: bash scripts/fetch_sources.sh
+      - name: Restore pinned sources from our own checksummed release (never live CryptPad)
+        run: bash scripts/fetch_archived_sources.sh
 
       - name: Prepare reviewed EuroOffice WASM source (no cross-fork merge)
         run: |
@@ -104,16 +105,18 @@ jobs:
           python3 scripts/optimize_docker_layers.py .work/cryptpad/Dockerfile \
             --report artifacts/provenance/shared-layers.json
 
-      - name: Record exact source modifications
+      - name: Record exact source modifications and audit still-unmirrored dependencies
         run: |
           set -euo pipefail
           cp .work/*.commit artifacts/provenance/
+          cp config/sources.lock.json artifacts/provenance/source-lock.json
           cp config/port-policy.json artifacts/provenance/port-policy.json
-          git -C .work/eurooffice diff --stat > artifacts/provenance/eurooffice-diff-stat.txt
-          git -C .work/eurooffice diff --binary > artifacts/provenance/eurooffice-diff.patch
-          git -C .work/cryptpad diff -- Dockerfile > artifacts/provenance/docker-diff.patch
-          { echo 'The Docker recipe was pinned by CryptPad commit:'; cat .work/cryptpad.commit;
-            echo 'Emscripten toolchain:'; grep -nE '^(FROM ubuntu:|ARG emversion=)' .work/cryptpad/Dockerfile; } > artifacts/provenance/recipe.txt
+          python3 scripts/audit_external_inputs.py .work/cryptpad/Dockerfile \
+            --report artifacts/provenance/remaining-network-dependencies.json
+          { echo 'Pinned CryptPad-derived build recipe:'; cat .work/cryptpad.commit;
+            echo 'EuroOffice source pin:'; cat .work/eurooffice.commit;
+            echo 'Emscripten toolchain:'; grep -nE '^(FROM ubuntu:|ARG emversion=)' .work/cryptpad/Dockerfile; } \
+            > artifacts/provenance/recipe.txt
           df -h .
 
       - name: Construct EuroOffice-only Docker compilation input

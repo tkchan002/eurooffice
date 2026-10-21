@@ -1,89 +1,79 @@
-# EuroOffice 9.3.5 x2t WebAssembly Builder — v8
+# EuroOffice 9.3.5 x2t WASM Builder — v9 (source-independence baseline)
 
-**Experimental. No verified converter binary is included.** This repository builds from the pinned EuroOffice 9.3.5 source and the pinned CryptPad x2t-WASM recipe using GitHub Actions. It is separate from Nurse Memo; do **not** overwrite the working `x2t.js` / `x2t.wasm` until real conversion tests pass.
+**Status: independent source archiving implemented; independent WebAssembly compilation NOT yet proven.**
 
-## v8 — fix native V8 inspector compilation in browser-only WASM
+This project is a separate build system for `x2t.js` and `x2t.wasm`. **Do not replace your known-working Nurse Memo converter.** It preserves all v8 EuroOffice-first/allowlisted source adaptations, browser-only `doctrenderer` qmake exclusions, the v6 disk optimization and v7 archive verification. The big v9 change is eliminating **live CryptPad source fetching on ordinary builds**.
 
-**Evidence:** v7 Docker compilation reached `DesktopEditor/doctrenderer` but qmake scheduled `js_internal/v8/v8_base.cpp` and `js_internal/v8/inspector/*.cpp`, which require native V8 and Boost.Beast headers. The observed failing lines have `-DV8_INSPECTOR` and `-I/core/Common/3dParty/v8/...`. Simply adding a header path would be the wrong architectural fix.
+## What the v9 ZIP contains—and does not
 
-**Cause:** v3 intentionally preserved EuroOffice 9.3.5's native `doctrenderer.pri` and `js_internal/js_base.pri`. CryptPad's pinned WASM build changes **those two build descriptions** to omit the native JS engine, inspector, and optional renderer embedding sources. We had imported its renderer stubs but not its build-selection files.
+Included:
+- Full v8 experimental Docker/Emscripten converter builder.
+- One-time bootstrap GitHub Action that obtains the original pinned CryptPad and EuroOffice source commits, then creates two checksummed source archives and publishes them as **Release assets in YOUR GitHub repository**.
+- An automatically generated `config/sources.lock.json` that pins the hashes, asset sizes and full commits and is committed to the repository (if branch permissions permit).
+- A build GitHub Action that downloads **only your own Release assets** for its source inputs, verifies both SHA-256 hashes, and extracts them securely. It has no live CryptPad checkout step.
+- Local no-network source restore and checksum-corruption tests.
+- The exact original Kreijstal shell and Bubblewrap reference scripts from the user's archived npm package, documented but **not** run automatically.
+- An audit of external downloads still present in the Docker recipe.
 
-**v8 correction:** `scripts/port_renderer_qmake.py` copies only the two `.pri` files from the **already pinned** CryptPad source into the prepared EuroOffice source tree. It validates the known EuroOffice native configuration, validates the expected CryptPad browser-only configuration, rejects accidental native V8 activation, ensures both files are valid before writing, supports reruns, and produces `renderer-qmake-port.json`. No unrelated EuroOffice C++ implementation files, security files, fonts or libraries are replaced. CryptPad's three renderer stubs remain as in v7.
+Not included:
+- Neither the enormous CryptPad and EuroOffice source snapshots nor toolchain binaries. **They must first be archived using the bootstrap workflow.**
+- The working ~38 MB third-party WASM binary; preserve the original uploaded npm package separately.
+- A fully offline C++ compiler environment. Docker and Emscripten still fetch dependencies from other sites; this is an **independent source baseline**, not a fully hermetic build.
+- Proof that final EuroOffice 9.3.5 compiles to a verified converter. v8 has not demonstrated completion.
 
-This intentionally omits some native renderer capabilities from the WASM library (as CryptPad's x2t recipe does). **It is not a claim of feature parity with the native EuroOffice DocumentServer**; subsequent conversions and DOCX/XLSX/PPTX round trips must be verified. It also does not guarantee all newer EuroOffice 9.3.5 sources will link with the older CryptPad qmake configuration.
+## First-time setup using only GitHub's website
 
-### Updating your v7 GitHub repo
+1. Create or update a **public standalone** repository (for example `eurooffice-wasm-builder`). Upload the **contents** of the full v9 ZIP preserving hidden `.github` folders, or apply the update-only ZIP to the existing v8 repository.
+2. Open **Actions → Archive pinned source inputs (one-time bootstrap)** → **Run workflow**. Enter exactly `ARCHIVE` for the confirmation box.
+3. This first run **must contact CryptPad and EuroOffice once** to capture their commits while they are available. The workflow checks out pinned revisions, packages their source without `.git`, computes SHA-256 checksums, tests restoration, and creates Release `x2t-source-v9.3.5-baseline-1` in **your own repo**.
+4. It attempts to commit `config/sources.lock.json` to the triggering branch. If your GitHub Actions permissions or branch protections prevent pushing, go to that Release, download **`sources.lock.json`**, and upload it yourself at `config/sources.lock.json` using GitHub's web editor. Otherwise, future builds intentionally refuse to continue. (GitHub Actions Settings → General → Workflow permissions may require read/write permissions for a bot push.)
+5. Download the three release assets (`cryptpad-source.tar.gz`, `eurooffice-source.tar.gz`, `sources.lock.json`) to an **independent backup** outside GitHub (e.g., external drive). An asset in only one GitHub repository is **not disaster-proof**.
+6. Open **Actions → Build EuroOffice 9.3.5 x2t WASM (owned snapshots v9)** → Run `preflight`. Only after preflight succeeds, consider running `build` (free `ubuntu-24.04`, minimum free 8 GiB, cleanup enabled). The full build may still hit C++ or disk limits.
 
-Apply the **v8 update-only ZIP** (four files) to the same paths, replacing existing versions. Run `preflight` then `build` on `ubuntu-24.04` with the current disk optimizations. Check `renderer-qmake-port.json` for `"ok": true` and two `"ported"` files. If a new compiler error appears, upload the next diagnostics ZIP. Keep the existing Nurse Memo converter unchanged until the full converter build and DOCX smoke test succeed.
+GitHub Release assets, unlike time-limited Actions diagnostic artifacts, are appropriate for preserving these large files, but retain an external backup because GitHub, your account or the release itself could still become unavailable. A release with the tag already present intentionally cannot be silently overwritten by the bootstrap workflow.
 
-### Full-source references
+### What happens after CryptPad disappears?
 
-- [Pinned CryptPad `doctrenderer.pri`](https://github.com/cryptpad/onlyoffice-x2t-wasm/blob/95f775fd3c42fae9e9af66ca072d3da3763e6c76/core/DesktopEditor/doctrenderer/doctrenderer.pri)
-- [Pinned CryptPad `js_base.pri`](https://github.com/cryptpad/onlyoffice-x2t-wasm/blob/95f775fd3c42fae9e9af66ca072d3da3763e6c76/core/DesktopEditor/doctrenderer/js_internal/js_base.pri)
-- [EuroOffice 9.3.5 native `doctrenderer.pri`](https://github.com/Euro-Office/core/blob/v9.3.5/DesktopEditor/doctrenderer/doctrenderer.pri)
-- [EuroOffice 9.3.5 native `js_base.pri`](https://github.com/Euro-Office/core/blob/v9.3.5/DesktopEditor/doctrenderer/js_internal/js_base.pri)
+The build workflow never executes `scripts/fetch_sources.sh`. It calls `scripts/fetch_archived_sources.sh`, which obtains **your own** release archives and verifies them using SHA-256 hashes committed in `config/sources.lock.json`. It does not need the live CryptPad repository. The archived CryptPad-derived recipe still contains third-party *non-CryptPad* dependency downloads, so those dependencies may remain externally required until mirrored separately.
 
----
+An entirely local restoration also works without GitHub if you possess the archives and the lockfile:
 
-## v7: fix confirmed UnicodeConverter Docker failure
-
-The v6 GitHub run successfully compiled the `UnicodeConverter` project. Its compiler output shows:
-
-```
-... -o UnicodeConverter/core_build/linux_64/release/obj/UnicodeConverter.o ...
-rm -f build/lib/linux_64/libUnicodeConverter.a
-ar cqs build/lib/linux_64/libUnicodeConverter.a UnicodeConverter/core_build/linux_64/release/obj/UnicodeConverter.o
-```
-
-The pinned CryptPad Dockerfile nevertheless executes:
-
-```
-RUN mv /core/UnicodeConverter.o /core/build/lib/linux_64/libUnicodeConverter.a
-```
-
-That `mv` assumes an object file at a different location and incorrectly treats an object as a static-library archive. The archive already exists. v7 removes **only this stale `mv`** and substitutes an explicit check:
-
-```dockerfile
-RUN test -s /core/build/lib/linux_64/libUnicodeConverter.a && \
-    ar t /core/build/lib/linux_64/libUnicodeConverter.a | grep -Fxq UnicodeConverter.o
+```bash
+# From a clean checkout of this builder, with both .tar.gz files already
+# present under .work/source-archives/:
+SOURCE_OFFLINE=true bash scripts/fetch_archived_sources.sh
 ```
 
-This verifies that the archive is nonempty and includes the actual compiled object. It does not copy, rename, fake, or skip the library. It preserves all compilation commands and dependent `COPY --from=unicodeconverter` instructions.
+This only checks the **source-restoration phase**, not a network-isolated full compilation. Back up the build repository, release archives, reference binary package, licenses, and toolchain details together.
 
-The change is applied by `scripts/tune_docker_recipe.py` **before** v6's shared-layer optimization. `scripts/check_docker_recipe.py` refuses to proceed if the obsolete move remains or the archive-verification instruction is missing. The adapter is idempotent and rejects unrecognized upstream recipe changes.
+## Technical architecture
 
-## Previous v7 update from v6 (included in this full ZIP)
+| Responsibility | Process | Dependency |
+|---|---|---|
+| One-time bootstrap | `scripts/bootstrap_upstream.sh` + original pinned fetcher | Original CryptPad + EuroOffice, once |
+| Own source archive | `scripts/source_snapshot.py create` | Local pinned checkouts |
+| SHA256 lock | `config/sources.lock.json` | Committed to own repo |
+| Normal builds | `scripts/fetch_archived_sources.sh` + `source_snapshot.py restore` | Own release or offline copies |
+| WebAssembly preparation | `prepare_eurooffice.py`, `port_renderer_qmake.py`, recipe adaptations | Restored source snapshots |
+| Remaining remote inputs | `audit_external_inputs.py` | Non-hermetic and **not archived** |
+| Converter build | Existing Docker BuildKit pipeline | Emscripten 4.0.11 pinned by recipe, external dependencies |
+| Verification | Existing DOCX smoke test | Does not replace XLSX/PPTX regression tests |
 
-If your repository is already on **v6**, use `EuroOffice_WASM_Builder_9.3.5_v7_UPDATE_ONLY.zip`. Replace the following five files using the GitHub website, preserving their paths:
+### Important source provenance nuance
 
-- `.github/workflows/build-eurooffice-x2t.yml`
-- `scripts/tune_docker_recipe.py`
-- `scripts/check_docker_recipe.py`
-- `tests/test_docker_recipe.py`
-- `README.md`
+Kreijstal's original `build-x2t-eurooffice.sh` was found inside your uploaded `eurooffice-sdkjs-common-9.3.5-rc.1.build.1.tgz`. It uses CryptPad's recipe and a host Emscripten 6.0.9-git toolchain. The script does **not** itself pin the source checkout, despite its README identifying the CryptPad commit. Our v9 baseline instead preserves the separately pinned CryptPad-derived WASM recipe (`95f775fd…`) and final EuroOffice v9.3.5 source as **distinct archives**, then applies the reviewed v8 adaptations. Do not represent these as identical to the original RC binary's source provenance.
 
-For a new builder repository, use `EuroOffice_WASM_Builder_9.3.5_v7_FULL.zip` instead. Do not add this builder directly to the Nurse Memo web app; maintain it as a separate build repository.
+In `reference/kreijstal/` the historical scripts are preserved for traceability. They are not a drop-in reproducible Ubuntu build. For eventual independence from all external projects, freeze/mirror the exact Emscripten SDK and native dependency source tarballs, pin container base-image digests, and run a **network-disabled full build** on clean hardware. That is not implemented in v9.
 
-## Run the workflow
+## Verification and failure modes
 
-1. In GitHub, open **Actions → Build EuroOffice 9.3.5 x2t WASM (qmake-archive v7)**.
-2. First choose `preflight`, `runner_label=ubuntu-24.04`. Check that `docker-recipe-audit.json` has `"ok": true` and `"unicodeconverter_archive_verified": true`.
-3. Run `build` with `runner_label=ubuntu-24.04`, `cleanup_standard_host=true`, `minimum_free_gib=8` (experimental setting, **not** a disk capacity guarantee).
-4. If the next step fails, download `eurooffice-9.3.5-x2t-build-diagnostics` and inspect `docker-build.log` for the **first** substantive compiler or linking error. Upload that ZIP for further diagnosis.
-5. Only when compilation and the DOCX smoke test pass does the workflow publish a converter artifact. Additional format tests and actual Nurse Memo integration tests remain necessary.
+- Unit tests: `python3 -m unittest discover -s tests -p 'test_*.py'`.
+- Test local extraction: `python3 scripts/source_snapshot.py restore --lock config/sources.lock.json --archives-dir .work/source-archives --work-root .work/verify-restored`. Run this only when the lock and archive assets exist.
+- A broken SHA-256, asset length, source revision, unsafe archive member or missing `.lock.json` fails closed.
+- The first archiving job may need GitHub write permissions and enough **temporary** disk to package both full source trees. It is not guaranteed to fit the free 14 GB runner (unlike the much larger compilation, it does not build dependencies).
+- Source archive ZIP does not include the compiler; you can lose the ability to compile if other repositories disappear. The diagnostics `remaining-network-dependencies.json` highlight this risk.
+- Reference known-good converter hashes: `x2t.js`: `66c2fe0e6de280d81643ffc7ba31cd9a5205c004b72227c08e78a0821ba0e520`; `x2t.wasm`: `841ff9b648f0a03a6e610e6f1d0e822a526dd3142eb43a64101653963f4fc35e`.
 
-## What stays unchanged from v6
+## Maintenance policy
 
-- Pinned EuroOffice 9.3.5 / CryptPad sources; reviewed source allowlist (no whole-fork merge).
-- Gumbo/Katana source handling; shared immutable EuroOffice Docker source layer.
-- Serialized BuildKit stages and disk monitoring for free/public GitHub Actions runners.
-- No arbitrary deletion of C++ source dependencies or compiler outputs.
-- Dedicated converter verification and DOCX round-trip smoke test.
-
-## Local validation and limitations
-
-The v7 regression suite tests the old failing instruction, the new archive check, incorrect/missing archives, idempotency and the unchanged downstream dependency wiring. It also runs the existing source, Docker and GitHub workflow tests. Local syntax/unit testing is **not** a full Emscripten compilation. The pinned recipe may expose more EuroOffice-specific differences once additional libraries compile. GitHub-hosted public-repository jobs still have individual runtime and storage limits, irrespective of billing.
-
-No proprietary credentials or patient data are required for this build. The workflow fetches third-party sources; review their licensing and security posture before using binaries in a hospital deployment.
-
-Source: [pinned CryptPad Dockerfile](https://github.com/cryptpad/onlyoffice-x2t-wasm/blob/95f775fd3c42fae9e9af66ca072d3da3763e6c76/Dockerfile).
+Keep the source archives and lockfile immutable. A future EuroOffice upgrade must use a new release tag, independently reviewed port policy, and tested converter artifacts. Never silently replace the pinned archive at an existing tag. Maintain third-party copyright and AGPL licenses and check any distribution obligations with your hospital IT/legal team.

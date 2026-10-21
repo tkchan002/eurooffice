@@ -1,0 +1,69 @@
+name: Archive pinned source inputs (one-time bootstrap)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Enter ARCHIVE to publish independent, pinned source snapshots as a GitHub Release'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  archive:
+    if: inputs.confirmation == 'ARCHIVE'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ARCHIVE_TAG: x2t-source-v9.3.5-baseline-1
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Stop if archive already exists (no silent overwrites)
+        run: |
+          set -euo pipefail
+          if gh release view "$ARCHIVE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'The release already exists. Do not overwrite immutable input history.' >&2
+            exit 1
+          fi
+      - name: Fetch the two pinned source repositories (bootstrap only)
+        run: bash scripts/bootstrap_upstream.sh
+      - name: Create checksummed source snapshots and lockfile
+        run: |
+          set -euo pipefail
+          python3 scripts/source_snapshot.py create \
+            --cryptpad .work/cryptpad --cryptpad-commit .work/cryptpad.commit \
+            --eurooffice .work/eurooffice --eurooffice-commit .work/eurooffice.commit \
+            --repository "$GITHUB_REPOSITORY" --release-tag "$ARCHIVE_TAG" \
+            --output-dir .work/source-archives --lock-output config/sources.lock.json
+          python3 scripts/source_snapshot.py restore \
+            --lock config/sources.lock.json --archives-dir .work/source-archives \
+            --work-root .work/verify-restored
+          test -f .work/verify-restored/cryptpad/core/X2tConverter/src/main.cpp
+          test -f .work/verify-restored/eurooffice/X2tConverter/src/main.cpp
+          df -h .
+      - name: Publish source archives to your own repository's release
+        run: |
+          set -euo pipefail
+          gh release create "$ARCHIVE_TAG" \
+            .work/source-archives/cryptpad-source.tar.gz \
+            .work/source-archives/eurooffice-source.tar.gz \
+            config/sources.lock.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --title 'Preserved pinned x2t source inputs v9.3.5' \
+            --notes 'Complete CryptPad WASM recipe and EuroOffice 9.3.5 source snapshots. Pin their hashes in config/sources.lock.json. Not a verified converter build.' \
+            --latest=false
+      - name: Commit generated SHA-256 lockfile for strong verification
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add config/sources.lock.json
+          git commit -m 'Pin independent x2t source archive checksums'
+          if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+            echo 'IMPORTANT: source archive release was created, but Git push failed (branch protection/permissions).' >&2
+            echo 'Download sources.lock.json from the release and upload it to config/sources.lock.json using GitHub web UI.' >&2
+            exit 1
+          fi
