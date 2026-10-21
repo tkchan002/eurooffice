@@ -1,4 +1,4 @@
-# EuroOffice 9.3.5 WebAssembly x2t builder
+# EuroOffice 9.3.5 WebAssembly x2t builder (scoped v2)
 
 **Purpose:** independently compile browser-compatible `x2t.js` and `x2t.wasm` from
 **Euro-Office/core v9.3.5**, using CryptPad's modified x2t build recipe.
@@ -21,9 +21,9 @@ converter until a built pair passes editor-level regression tests.
 3. Open **Actions** > **Build EuroOffice 9.3.5 x2t WASM (experimental)** >
    **Run workflow**.
 4. Leave **mode = preflight** for the first run. This fetches source revisions,
-   reports CryptPad-vs-EuroOffice changes and stops if there are conflicts.
+   ports only build-scoped CryptPad changes and stops if any conflicts remain within that scope.
 5. Download the **eurooffice-9.3.5-x2t-build-diagnostics** artifact. Inspect
-   `source-merge.json`. Its `conflicts` array must be empty before compilation.
+   `source-merge.json`. Its `conflicts` array must be empty before compilation. The `excluded` array documents unrelated changes intentionally left as EuroOffice source.
 6. If preflight passes, rerun with **mode = build**. This performs a full
    resource-intensive Docker/WebAssembly build, structural WASM validation and
    a real blank DOCX -> internal BIN -> DOCX smoke test.
@@ -55,38 +55,63 @@ short-prefix checks with full SHAs from your own passing run. Docker sub-depende
 repositories and apt packages are still not locked by digest; this is **not**
 a bit-for-bit hermetic/reproducible build.
 
-## Exactly what CryptPad changes
+## Why v1 failed (75 conflicts) and how v2 differs
 
-The **cryptpad/onlyoffice-x2t-wasm** repository maintains a modified copy of
-ONLYOFFICE/core in `/core` (its README documents comparing against
-`ONLYOFFICE/core v9.3.0.140`). It also supplies:
+The previous port attempted to three-way-merge **every** difference in the CryptPad
+`core` tree onto EuroOffice 9.3.5. This included independently maintained and
+irrelevant third-party tooling such as `Common/3dParty/v8/` and
+`Common/3dParty/socketio/`. The error was source selection, not necessarily
+75 necessary converter fixes.
 
-- `Dockerfile`: separate stages compile numerous core libraries with Emscripten;
-  the final stage builds `X2tConverter/build/Qt/X2tConverter.pro`;
-- `embuild.sh`: overrides qmake to use `emcc` / `em++` / `emmake`, ICU,
-  size-optimized compilation, WASM memory growth, and exported runtime methods;
-- `wrap-main.cpp`: exposes `main1(char* xmlPath)` to call the ordinary x2t `main`;
-- `pre-js.js`: disables automatic main execution/exit and locates the WASM
-  companion file relative to the loader;
-- `DesktopEditor/doctrenderer/*_empty.cpp`: modified-source compatibility
-  files referenced by Dockerfile's `doctrenderer` stage. These are **not**
-  present under the same paths in stock EuroOffice v9.3.5;
-- final linker flags including `--pre-js`, `-sEXPORTED_RUNTIME_METHODS=ccall,FS`,
-  `-sEXPORTED_FUNCTIONS=_main1`, `-sALLOW_MEMORY_GROWTH`.
+**v2 uses an explicit version-controlled port scope**, defined in
+`config/port-scope.json`. It includes the source roots compiled by CryptPad's
+x2t Docker recipe, while restricting `Common/3dParty` modifications to
+listed actually used components. It excludes V8, Socket.IO, and `nc-build` /
+`gclient_paths.patch` tooling. Those files remain as authentic EuroOffice
+9.3.5 source rather than being overwritten. This is **not** an instruction to
+remove them from the EuroOffice source tree; the filter only governs what
+CryptPad changes may be transplanted.
 
-It **isn't safe** to copy the old ONLYOFFICE `/core` tree wholesale and call it
-EuroOffice 9.3.5. This builder starts with authentic EuroOffice 9.3.5 and ports
-only the modifications made between stock ONLYOFFICE 9.3.0 and CryptPad's tree.
-For each changed file, it chooses a copy if the base is unchanged, otherwise
-attempts a three-way text merge. Mismatched binary files, ambiguous dual
-additions and text conflicts are **fatal**. It logs missing/deleted files but
-never silently deletes newer EuroOffice source.
+The importer records all skipped differences as `excluded`, including the
+exact file and exclusion reason, in `source-merge.json`. An excluded file is
+never copied or merged. A conflict in an included build-scoped source still
+stops preflight: the builder never silently resolves C++ conflicts by picking
+EuroOffice or CryptPad. It checks that all three CryptPad renderer stubs
+(`doctrenderer_empty.cpp`, `docbuilder_empty.cpp`, `docbuilder_p_empty.cpp`)
+are present after the port.
 
-`source-merge.json` lists **every modified or added source pathname** and
-records whether it was merged/copied/left alone/conflicted. That list is your
-starting point for creating a curated version-specific patch once preflight
-is stable. `cryptpad-source-changes.diff` contains the actual modified text
-for code review (it is informational, not intended to apply directly). A three-way text merge does **not** prove binary compatibility.
+**Scope is an engineering hypothesis** based on CryptPad's Dockerfile and can
+be revised if compiler diagnostics demonstrate missing adaptations. A passing
+preflight is not proof that all required build-time changes have been carried
+over, and a passing compilation is not proof of round-trip fidelity. Keep the
+existing Nurse Memo converter unchanged until full testing.
+
+### CryptPad's specific WebAssembly approach
+
+- Docker stages compile the converter and dependent static libraries with
+  Emscripten 4.0.11 (Qt/qmake via `embuild.sh`).
+- `wrap-main.cpp` exposes `main1(char *xmlPath)` to the JS runtime;
+  `pre-js.js` prepares its browser/WASM loader.
+- The x2t link uses `--pre-js`, exports the converter entry point and
+  `ccall`/`FS`, and enables WebAssembly memory growth.
+- The renderer stage substitutes three CryptPad-supplied `*_empty.cpp` stubs
+  before compiling the renderer library.
+
+None of this requires merging Chromium V8 or Socket.IO source-control scripts.
+The untouched CryptPad Docker recipe still contains a few upstream toolchain
+assumptions and may need explicit EuroOffice 9.3.5-specific fixes once the
+full build is attempted; these will be diagnosed at the compile stage.
+
+### Reading the preflight diagnostics
+
+- `source-merge.json` > `excluded`: CryptPad changes NOT applied, with reasons.
+- `source-merge.json` > `copied` / `merged`: CryptPad changes applied to EuroOffice.
+- `source-merge.json` > `conflicts`: build-scoped changes that still need manual
+  source reconciliation. The report is intentionally fatal on these.
+- `source-merge.json` > `mandatory`: verifies renderer compatibility stubs.
+- `cryptpad-source-changes.diff`: review diff of only selected changes.
+- `eurooffice-diff.patch`: exact modifications made to pinned EuroOffice in preflight.
+- `port-scope.json`: the policy used by the run, archived for traceability.
 
 ## Why the former workflow failed
 
@@ -101,7 +126,7 @@ RUN cp /core/DesktopEditor/doctrenderer/docbuilder_p_empty.cpp /core/DesktopEdit
 
 Those `*_empty.cpp` files are part of CryptPad's modified source. If the
 Dockerfile is fed an unmodified EuroOffice source tree, the `cp` fails (exit
-code 1). This builder brings CryptPad-added files into the EuroOffice source
+code 1). This builder brings *selected* CryptPad-added files into the EuroOffice source
 **before** invoking Docker. If any subsequent compile conflicts arise, address
 them individually: do not skip compiler errors or copy an old binary library.
 

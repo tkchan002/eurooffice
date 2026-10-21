@@ -1,4 +1,4 @@
-name: Build EuroOffice 9.3.5 x2t WASM (experimental)
+name: Build EuroOffice 9.3.5 x2t WASM (scoped v2)
 
 on:
   workflow_dispatch:
@@ -44,10 +44,11 @@ jobs:
       - name: Fetch and verify pinned source trees
         run: bash scripts/fetch_sources.sh
 
-      - name: Port CryptPad modifications with three-way file merges
+      - name: Port build-scoped CryptPad modifications (ignore unrelated source)
         run: |
           mkdir -p artifacts/provenance
           python3 scripts/port_wasm_changes.py \
+            --scope config/port-scope.json \
             --base .work/onlyoffice-base \
             --patched .work/cryptpad/core \
             --target .work/eurooffice \
@@ -57,6 +58,7 @@ jobs:
       - name: Create audit manifest
         run: |
           cp .work/*.commit artifacts/provenance/
+          cp config/port-scope.json artifacts/provenance/port-scope.json
           git -C .work/eurooffice diff --stat > artifacts/provenance/eurooffice-diff-stat.txt
           git -C .work/eurooffice diff --binary > artifacts/provenance/eurooffice-diff.patch
           { echo 'Toolchain configured in CryptPad Dockerfile:'; grep -nE '^(FROM ubuntu:|ARG emversion=|.*--branch v9.3.0.140)' .work/cryptpad/Dockerfile; } > artifacts/provenance/recipe.txt
@@ -68,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           # No upstream CryptPad /core implementation remains as the build source.
-          # Every file comes from EuroOffice 9.3.5 with explicit CryptPad adaptations.
+          # Every file comes from EuroOffice 9.3.5 with selected CryptPad adaptations.
           rm -rf .work/cryptpad/core
           mkdir -p .work/cryptpad/core
           rsync -a --exclude='.git/' .work/eurooffice/ .work/cryptpad/core/
