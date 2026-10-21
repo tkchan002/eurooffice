@@ -1,0 +1,5 @@
+# Bound simultaneous heavy Docker build stages to reduce peak disk and memory I/O.
+# The shared-source parent reduces repeated COPY layers; one stage reduces peak writes.
+# Final disk usage is still unknown until a full upstream build.
+[worker.oci]
+  max-parallelism = 1
