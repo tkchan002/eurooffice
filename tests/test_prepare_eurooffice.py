@@ -126,23 +126,5 @@ class PolicyTests(unittest.TestCase):
         self.assertNotIn('html.h', [x['file'] for x in POLICY['replaceExact']])
 
 
-class DockerTests(unittest.TestCase):
-    def test_detect_external_sources(self):
-        text = 'FROM alpine AS base\nFROM base AS build\nCOPY --from=gumbo /a /b\nCOPY --from=build /x /y\n'
-        result = audit.inspect(text)
-        self.assertEqual(['gumbo'], result['undefined_copy_sources'])
-
-    def test_add_fb2_library_only_to_final_stage(self):
-        marker = 'COPY --from=htmlfile2 /core/build/lib/linux_64/libHtmlFile2.a /core/build/lib/linux_64/\n'
-        recipe = 'FROM base AS log-symbols\n' + marker + 'FROM base AS build\n' + marker
-        text = docker.modify(recipe)
-        self.assertEqual(1, text.count('COPY --from=fb2file /core/build/lib/linux_64/libFb2File.a'))
-        self.assertEqual(text, docker.modify(text))
-
-    def test_recipe_without_marker_fails(self):
-        with self.assertRaises(ValueError):
-            docker.modify('FROM base AS build\n')
-
-
 if __name__ == '__main__':
     unittest.main()

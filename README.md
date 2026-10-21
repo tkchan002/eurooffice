@@ -1,76 +1,81 @@
-# EuroOffice 9.3.5 x2t WebAssembly builder — v3 (source-preparation correction)
+# EuroOffice 9.3.5 x2t WebAssembly Builder — v4 (Gumbo/Katana Docker repair)
 
-**Status: experimental. This repository has NOT yet independently compiled or validated an EuroOffice 9.3.5 converter.** It is a deliberately separate GitHub Actions builder; it does not modify Nurse Memo and never downloads the third-party prebuilt x2t package. The workflow's preflight is useful, but passing preflight alone is *not* evidence that `x2t.js` or `x2t.wasm` can be generated.
+**Status: experimental.** This repository is intended to independently compile `x2t.js` and `x2t.wasm` from EuroOffice/core `v9.3.5`, without consuming another developer's precompiled converter. The full C++ compilation has **not** yet been completed or verified. Keep the existing working Nurse Memo converter unchanged until the build and document round-trip tests succeed.
 
-## Why v2 failed: analysis of the actual diagnostic ZIP
+## v4: what the uploaded GitHub Actions diagnostics revealed
 
-The user's `eurooffice-9.3.5-x2t-build-diagnostics.zip` contains `source-merge.json`: **8,079 modified and 69 newly added files in the broad scoped comparison, 8,071 already identical to the EuroOffice tree, 39 auto-merged, 16 copied and 22 unresolved conflicts**. This was not a normal 22-file branch merge: the comparison used an older ONLYOFFICE baseline, so it treated ordinary historical source changes, translation changes and even removed copyright notice lines as CryptPad-specific WASM changes.
+The supplied `eurooffice-9.3.5-x2t-build-diagnostics(1).zip` proves that v3 source preparation completed and that Docker failed **before compiler execution**, while resolving the undeclared `gumbo` stage:
 
-The 22 failing files have explicit v3 decisions:
+```
+[internal] load metadata for docker.io/library/gumbo:latest
+ERROR: pull access denied, repository does not exist or may require authorization
+Dockerfile:490 COPY --from=gumbo /gumbo-parser /gumbo-parser
+```
 
-| Conflict class | Paths | Decision |
-| --- | ---: | --- |
-| qmake/Emscripten include adjustments | 5 | Apply an exact reviewed include replacement in the EuroOffice source, leaving all other content unchanged. |
-| EuroOffice CMake and unrelated web JS | 13 | Retain EuroOffice 9.3.5. The pinned CryptPad Docker recipe uses qmake, not these CMake definitions. |
-| EuroOffice TLS verification | 1 | Keep EuroOffice's `CURLOPT_SSL_VERIFYPEER=1` and `CURLOPT_SSL_VERIFYHOST=2` logic; never restore CryptPad's older TLS bypass. |
-| EuroOffice `BinaryReader` implementation | 2 | Keep EuroOffice's consistent constructor/destructor. |
-| EuroOffice PDF SHA/OpenSSL handling | 1 | Keep EuroOffice's `openssl/sha.h` integration instead of inlining older OpenSSL C sources. |
+The recipe audit correctly identified **two undefined Docker stage names**, `gumbo` and `katana`, but v3 only warned rather than blocking the expensive Docker command. These names were not intended to be Docker Hub images. This is not an authentication problem, so Docker login will not fix it.
 
-Additional reviewed non-conflicting porting edits: one renderer include-path correction and two Emscripten process-limit guards in `X2tConverter/src/main.cpp`. The project also edits one x2t qmake dependency declaration to link the libraries in the selected Docker recipe, and adds `libFb2File.a` to that recipe rather than adopting CryptPad's silently disabled FB2 conversion functions.
+### Verified parser source relationships
 
-All 22 previous conflicts are covered by an explicit allowlist entry. Unlike v2, there is **no three-way merge** and no source-wide copying. Most EuroOffice C++ files remain byte-for-byte identical to the pinned release. Changes are recorded in `artifacts/provenance/eurooffice-diff.patch` for human review.
+- The pinned CryptPad recipe already defines `FROM base AS html` and calls `python fetch.py` in `core/Common/3dParty/html`.
+- EuroOffice 9.3.5 `Common/3dParty/html/fetch.py` clones `google/gumbo-parser` at `aa91b27b02c0c80c482e24348a457ed7c3c088e0` and `jasenhuang/katana-parser` at `be6df458d4540eee375c513958dcb862a391cdd1`, applying several source compatibility edits.
+- EuroOffice `Common/3dParty/html/gumbo.pri` directly includes the Gumbo C sources and `htmltoxhtml.cpp` in qmake `SOURCES`. The corresponding `katana.pri` likewise includes the Katana C sources. There is no requirement for an additional independently compiled `libgumbo.a` / `libkatana.a` just to use these `.pri` projects.
+- The old `libgumbo.a` / `libkatana.a` COPYs appear only in the **optional `log-symbols` stage**, not in the final `output` stage's dependency graph. They can be removed without inventing replacement images or builds.
 
-## GitHub website installation (no command line needed)
+### Exact source-recipe changes
 
-**For an existing v2 builder repository:** unzip `EuroOffice_WASM_Builder_9.3.5_v3_UPDATE_ONLY.zip`; upload its files to the corresponding paths using GitHub's Add file > Upload files interface. Preserve the `.github/workflows/` folder. Commit the update. The following obsolete v2 files should be deleted through GitHub's website: `config/port-scope.json`, `scripts/port_wasm_changes.py`, and `tests/test_port_wasm_changes.py`. They are not referenced by the v3 workflow if left on disk, but removal keeps the repository clean.
+v4's `scripts/tune_docker_recipe.py` modifies the **pinned** CryptPad Dockerfile in `.work/cryptpad/Dockerfile`:
 
-**For a new repository:** upload the contents of the `FULL` ZIP (not the containing folder).
+1. In `fb2file`, replace `COPY --from=gumbo /gumbo-parser /gumbo-parser` with `COPY --from=html /core/Common/3dParty/html /core/Common/3dParty/html`. That supplies the fetched parser tree **where EuroOffice's `.pri` files expect it**.
+2. In optional `log-symbols`, remove the two invalid `COPY --from=gumbo ...libgumbo.a` and `COPY --from=katana ...libkatana.a` lines. These are not inputs to the actual converter build. The C source is compiled via the existing qmake source lists.
+3. Retain the v3 correction that copies `libFb2File.a` into the **final `build` stage**, so we do not disable EuroOffice's FB2 conversion logic.
+4. Fail rather than guess if the pinned Dockerfile's structure changes.
 
-1. Go to **Actions > Build EuroOffice 9.3.5 x2t WASM (allowlisted v3)**.
-2. Select **Run workflow**, choose `preflight`, and run it.
-3. The preflight produces `artifacts/provenance/source-preparation.json`, `eurooffice-diff.patch`, `docker-diff.patch`, exact source commit IDs and `docker-recipe-audit.json`.
-4. Review the `source-preparation.json` file: it must have no errors, and should show copied qmake/build files plus exactly reviewed code edits.
-5. **Before running `build`, inspect the recipe audit and the unresolved build-recipe caveat below.** The actual C++ compilation remains unverified.
+`check_docker_recipe.py` now **exits with failure** if any undefined `COPY --from` stage remains, the `html` stage is missing its fetch command, the `fb2file` stage lacks the parser source, or the final build stage lacks `libFb2File.a`. It writes details to `artifacts/provenance/docker-recipe-audit.json` before Docker starts.
 
-## Known upstream Docker recipe problem — NOT resolved by the 22-file port
+## Install via GitHub website (no terminal)
 
-The pinned CryptPad Dockerfile's `COPY --from=gumbo` and `COPY --from=katana` statements refer to stage names not defined by a `FROM ... AS gumbo` or `FROM ... AS katana` in that same Dockerfile. In ordinary Docker syntax, the builder may try to resolve these as external images instead. This is a separate, likely **build-stage blocker**, unrelated to EuroOffice merge conflicts.
+**If your v3 repository is already uploaded:**
 
-The v3 workflow explicitly audits and reports such undefined names. It does not fabricate unverified Gumbo/Katana build recipes or silently pull images. To finish the independent build, these third-party parser libraries must be compiled for the same Emscripten target and supplied to the stages that expect `/usr/local/lib/libgumbo.a`, `/usr/local/lib/libkatana.a` and source directories. The pinned `html` stage fetches parser source, but does not visibly compile these two static libraries. Even if preflight is successful, **a full build may still fail at this stage**. Additional compiler or ABI incompatibilities may appear afterward.
+1. Download and extract `EuroOffice_WASM_Builder_9.3.5_v4_UPDATE_ONLY.zip`.
+2. Upload its **six files** to their identical paths in your GitHub repository, replacing the current versions. Upload the *contents* of the ZIP, not the ZIP itself. Preserve the `.github` directory.
+3. Open **Actions → Build EuroOffice 9.3.5 x2t WASM (parser sources v4)**.
+4. Run `preflight`. Download `eurooffice-9.3.5-x2t-build-diagnostics` and check `docker-recipe-audit.json`: the `ok` field must be `true` and `undefined_copy_sources` must be empty.
+5. Then run `build`. If it fails, attach that run's diagnostics ZIP and the compiler's **first actual error**. Do not downgrade security fixes or replace a needed library with arbitrary host binaries.
 
-The CryptPad Dockerfile also builds OpenSSL `OpenSSL_1_1_1f`, while EuroOffice's newer PDF source was updated for a different OpenSSL linkage strategy. This is an additional possible compatibility concern to review at link time; do not downgrade EuroOffice's security patches to force compilation.
+**If starting over:** extract `EuroOffice_WASM_Builder_9.3.5_v4_FULL.zip` and upload the extracted files to a new GitHub repository. This is standalone; it does not alter Nurse Memo.
 
-## Dependencies and reproducibility
+For a historical v2 repository, delete the obsolete files `config/port-scope.json`, `scripts/port_wasm_changes.py`, and `tests/test_port_wasm_changes.py`. They are not used by the v4 workflow.
 
-- EuroOffice/core `v9.3.5` (checked tag hash prefix `5a33ce6`).
-- CryptPad/onlyoffice-x2t-wasm commit `95f775fd3c42fae9e9af66ca072d3da3763e6c76`.
-- CryptPad's recipe pins Emscripten `4.0.11`, Ubuntu `22.04`, and builds multiple dependent native libraries as WASM-compatible `.a` archives.
-- Source archive plus patches and SHA hashes are recorded in the CI artifacts; no built converter is considered verified unless the WASM validation and actual DOCX smoke test pass.
-- Several transitive packages/apt dependencies are not locked by immutable digest. The build is **source-pinned but not bit-for-bit reproducible/hermetic**.
+## Validation and scope
 
-The third-party EuroOffice RC converter used a different compiler toolchain; equality with its `x2t.js`/`x2t.wasm` hashes is neither assumed nor required.
-
-## What the repo does and does not guarantee
-
-| Check | v3 status |
+| Check | Status |
 | --- | --- |
-| All 22 reported conflicts have an explicit reviewed policy | Implemented / unit-tested |
-| No broad two-fork source merge | Implemented / unit-tested |
-| Previous TLS and PDF security changes preserved | Guarded by assertions |
-| Previously removed license-header text not copied wholesale | Implemented |
-| CryptPad qmake support and three renderer stubs available | Included when absent, guarded |
-| Real C++ compile with EuroOffice 9.3.5 | **Not executed** |
-| Gumbo/Katana static parser libraries defined in recipe | **Outstanding** |
-| `x2t.js` and `x2t.wasm` generated | **Not demonstrated** |
-| DOCX conversion fidelity and hospital security | **Not established** |
+| Original v3 undefined-stage failure reproduced in a pinned-layout fixture | Verified |
+| Repair eliminates the undefined `gumbo` / `katana` references | Verified on fixture |
+| `fb2file` gets fetched HTML parser source; final link keeps FB2 | Verified on fixture |
+| Repair is idempotent, rejects changed Dockerfile structure | Verified |
+| All existing EuroOffice source conflict preservation tests | Passed |
+| Repository source and workflow syntax | Checked locally |
+| Full pinned Dockerfile processed by GitHub | **Awaiting next preflight** |
+| EuroOffice 9.3.5 C++ compilation and emitted converter | **Not yet verified** |
+| Browser/document conversion compatibility | **Not yet verified** |
 
-## Source-preparation tests
+**22 Python tests pass** as of packaging. They test source preparation and Docker recipe transformations; they do not compile EuroOffice. The actual build may reveal further issues, particularly toolchain/ABI mismatches, external dependency fetches, and OpenSSL linkage. The workflow will preserve the first failing compile log for diagnosis.
 
-The repository includes 13 automated Python unit tests for allowlist behavior, preservation of EuroOffice files, rejected unexpected changes, renderer-stub conflicts, idempotence, dangerous path rejection, all 22 prior conflict decisions, and Docker link/audit utilities. CI runs those and Python, bash, and JavaScript syntax checks before retrieving upstream source.
+### Reproducibility notes
+
+- EuroOffice source is pinned to the `v9.3.5` tag (expected Git hash prefix `5a33ce6`).
+- CryptPad build recipe is pinned to commit `95f775fd3c42fae9e9af66ca072d3da3763e6c76` and Emscripten `4.0.11`.
+- Gumbo and Katana source revisions are specified by EuroOffice's `fetch.py`.
+- Some transitive dependencies are still retrieved from moving repositories/package registries; this pipeline is *version-pinned at the main source level* but is not proven bit-for-bit reproducible or fully hermetic.
+- The v3 allowlisted source adaptations remain unchanged. No wholesale merge with older ONLYOFFICE code is performed. EuroOffice TLS validation and modern PDF/OpenSSL source remain protected by tests/assertions.
+- The successful `build` mode (if achieved) verifies its generated WebAssembly and runs a DOCX smoke conversion before uploading a separate verified-converter artifact. Passing preflight never indicates successful compilation.
 
 ## Technical references
 
-- CryptPad pinned Docker build recipe: https://raw.githubusercontent.com/cryptpad/onlyoffice-x2t-wasm/95f775fd3c42fae9e9af66ca072d3da3763e6c76/Dockerfile
-- CryptPad qmake/Emscripten wrapper: https://raw.githubusercontent.com/cryptpad/onlyoffice-x2t-wasm/95f775fd3c42fae9e9af66ca072d3da3763e6c76/embuild.sh
-- EuroOffice core: https://github.com/Euro-Office/core/releases/tag/v9.3.5
-- Existing license records: `LICENSES/euro-office-LICENSE.txt` and upstream license files must be preserved and reviewed before redistribution.
+- [Pinned CryptPad Dockerfile](https://raw.githubusercontent.com/cryptpad/onlyoffice-x2t-wasm/95f775fd3c42fae9e9af66ca072d3da3763e6c76/Dockerfile)
+- [EuroOffice 9.3.5 HTML parser fetch.py](https://raw.githubusercontent.com/Euro-Office/core/v9.3.5/Common/3dParty/html/fetch.py)
+- [EuroOffice 9.3.5 Gumbo qmake project](https://raw.githubusercontent.com/Euro-Office/core/v9.3.5/Common/3dParty/html/gumbo.pri)
+- [EuroOffice 9.3.5 Katana qmake project](https://raw.githubusercontent.com/Euro-Office/core/v9.3.5/Common/3dParty/html/katana.pri)
+
+Keep all upstream license notices. Before releasing generated converter binaries for hospital use, review the complete dependency licenses and perform broader DOCX/XLSX/PPTX regression and security testing.

@@ -1,4 +1,4 @@
-name: Build EuroOffice 9.3.5 x2t WASM (allowlisted v3)
+name: Build EuroOffice 9.3.5 x2t WASM (parser sources v4)
 
 on:
   workflow_dispatch:
@@ -54,7 +54,7 @@ jobs:
             --policy config/port-policy.json \
             --report artifacts/provenance/source-preparation.json
 
-      - name: Make targeted Docker link change and audit recipe
+      - name: Repair Gumbo/Katana Docker references and enforce fail-closed recipe audit
         run: |
           set -euo pipefail
           python3 scripts/tune_docker_recipe.py .work/cryptpad/Dockerfile
