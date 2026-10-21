@@ -1,0 +1,125 @@
+name: Build EuroOffice 9.3.5 x2t WASM (experimental)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run source adaptation only, or compile x2t (resource-intensive)'
+        type: choice
+        required: true
+        default: preflight
+        options:
+          - preflight
+          - build
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eurooffice-x2t-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      DOCKER_BUILDKIT: '1'
+      BUILDKIT_PROGRESS: plain
+    steps:
+      - name: Checkout the independent builder
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Local regression tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          python3 -m py_compile scripts/port_wasm_changes.py
+          bash -n scripts/fetch_sources.sh
+          node --check scripts/verify_converter.cjs
+          node --check scripts/smoke_docx.cjs
+
+      - name: Fetch and verify pinned source trees
+        run: bash scripts/fetch_sources.sh
+
+      - name: Port CryptPad modifications with three-way file merges
+        run: |
+          mkdir -p artifacts/provenance
+          python3 scripts/port_wasm_changes.py \
+            --base .work/onlyoffice-base \
+            --patched .work/cryptpad/core \
+            --target .work/eurooffice \
+            --report artifacts/provenance/source-merge.json \
+            --patch artifacts/provenance/cryptpad-source-changes.diff
+
+      - name: Create audit manifest
+        run: |
+          cp .work/*.commit artifacts/provenance/
+          git -C .work/eurooffice diff --stat > artifacts/provenance/eurooffice-diff-stat.txt
+          git -C .work/eurooffice diff --binary > artifacts/provenance/eurooffice-diff.patch
+          { echo 'Toolchain configured in CryptPad Dockerfile:'; grep -nE '^(FROM ubuntu:|ARG emversion=|.*--branch v9.3.0.140)' .work/cryptpad/Dockerfile; } > artifacts/provenance/recipe.txt
+          du -sh .work/* || true
+          df -h .
+
+      - name: Assemble exact EuroOffice 9.3.5 Docker build context
+        if: inputs.mode == 'build'
+        run: |
+          set -euo pipefail
+          # No upstream CryptPad /core implementation remains as the build source.
+          # Every file comes from EuroOffice 9.3.5 with explicit CryptPad adaptations.
+          rm -rf .work/cryptpad/core
+          mkdir -p .work/cryptpad/core
+          rsync -a --exclude='.git/' .work/eurooffice/ .work/cryptpad/core/
+          printf '\n.git\n' >> .work/cryptpad/.dockerignore
+          test -f .work/cryptpad/core/X2tConverter/src/main.cpp
+          test -f .work/cryptpad/core/DesktopEditor/doctrenderer/doctrenderer_empty.cpp
+          test -f .work/cryptpad/wrap-main.cpp
+          test -f .work/cryptpad/pre-js.js
+          df -h .
+
+      - name: Compile with pinned CryptPad Docker/Emscripten 4.0.11
+        if: inputs.mode == 'build'
+        working-directory: .work/cryptpad
+        run: |
+          set -euo pipefail
+          mkdir -p ../../artifacts/converter
+          docker buildx build \
+            --file Dockerfile \
+            --target output \
+            --output type=local,dest=../../artifacts/converter \
+            --progress=plain . 2>&1 | tee ../../artifacts/provenance/docker-build.log
+
+      - name: Validate compiled x2t.js and x2t.wasm
+        if: inputs.mode == 'build'
+        run: |
+          set -euo pipefail
+          node scripts/verify_converter.cjs artifacts/converter
+          node --check artifacts/converter/x2t.js
+
+      - name: Test real DOCX round trip
+        if: inputs.mode == 'build'
+        run: |
+          set -euo pipefail
+          node --max-old-space-size=6144 scripts/smoke_docx.cjs artifacts/converter
+
+      - name: Upload generated converter (only after passing tests)
+        if: inputs.mode == 'build' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eurooffice-9.3.5-x2t-wasm-verified-docx-smoke
+          path: artifacts/converter/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload diagnostic report even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eurooffice-9.3.5-x2t-build-diagnostics
+          path: |
+            artifacts/provenance/
+            .work/merge-conflicts/
+          if-no-files-found: warn
+          retention-days: 30
